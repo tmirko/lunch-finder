@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for dark mode and clean UI
+# Custom CSS for dark mode and mobile-first UI
 st.markdown("""
 <style>
     /* Dark mode background */
@@ -31,93 +31,106 @@ st.markdown("""
         color: #eaeaea;
     }
     
-    /* Main content area */
+    /* Main content area - tight padding for mobile */
     .main .block-container {
-        padding-top: 1rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
+        padding-top: 0.5rem;
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
         max-width: 100%;
     }
     
     /* Sidebar styling */
     [data-testid="stSidebar"] {
         background-color: #16162a;
-        padding: 1rem;
+        padding: 0.5rem;
     }
     [data-testid="stSidebar"] .stSelectbox label,
     [data-testid="stSidebar"] .stCheckbox label {
         color: #a0a0a0 !important;
-        font-size: 0.9rem !important;
+        font-size: 0.85rem !important;
     }
     
-    /* Sidebar header - bigger */
+    /* Sidebar header */
     .sidebar-header {
-        font-size: 1.6rem;
+        font-size: 1.4rem;
         font-weight: 600;
         color: #ffffff;
-        margin-bottom: 1.5rem;
-        padding-bottom: 0.8rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
         border-bottom: 1px solid #3d3d5c;
     }
     
-    /* Dish names - bigger, prominent */
+    /* Dish row container */
+    .dish-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #2d2d44;
+        margin-bottom: 0.5rem;
+    }
+    
+    .dish-text {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    /* Dish names - compact for mobile */
     .dish-german {
-        font-size: 1.5rem;
+        font-size: 1.1rem;
         font-weight: 600;
         color: #ffffff;
         margin: 0;
         padding: 0;
-        line-height: 1.4;
+        line-height: 1.3;
     }
     .dish-english {
-        font-size: 1.5rem;
+        font-size: 1.1rem;
         font-weight: 400;
-        color: #b0b0b0;
+        color: #a0a0a0;
         font-style: italic;
         margin: 0;
         padding: 0;
-        line-height: 1.4;
+        line-height: 1.3;
+    }
+    .dish-location {
+        font-size: 0.8rem;
+        color: #6c9fff;
+        margin: 0.2rem 0 0 0;
+        padding: 0;
     }
     .dish-price {
-        font-size: 1rem;
-        color: #ffd700;
-        margin-top: 0.5rem;
-    }
-    
-    /* Provider section */
-    .provider-name {
         font-size: 0.85rem;
-        color: #666;
-        margin-bottom: 1rem;
+        color: #ffd700;
+        margin: 0.2rem 0 0 0;
     }
     
     /* Links */
     a {
         color: #6c9fff !important;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
+        text-decoration: none;
     }
     
-    /* Hide Streamlit branding */
+    /* Hide Streamlit branding but keep header */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* Divider */
-    hr {
-        border-color: #3d3d5c;
-        margin: 1rem 0;
+    /* Hide default streamlit padding */
+    .block-container {
+        padding-bottom: 0 !important;
     }
     
-    /* Image container */
+    /* Image container - right side */
     .img-container {
-        position: relative;
-        display: inline-block;
+        flex-shrink: 0;
     }
     
     .dish-thumb {
-        width: 280px;
-        height: 200px;
+        width: 120px;
+        height: 90px;
         object-fit: cover;
-        border-radius: 10px;
+        border-radius: 8px;
         cursor: pointer;
         transition: opacity 0.3s ease;
     }
@@ -134,7 +147,7 @@ st.markdown("""
         left: 0;
         width: 100vw;
         height: 100vh;
-        background: rgba(0, 0, 0, 0.85);
+        background: rgba(0, 0, 0, 0.9);
         opacity: 0;
         visibility: hidden;
         transition: opacity 0.3s ease;
@@ -153,10 +166,10 @@ st.markdown("""
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        max-width: 80vw;
-        max-height: 80vh;
+        max-width: 90vw;
+        max-height: 85vh;
         object-fit: contain;
-        border-radius: 12px;
+        border-radius: 10px;
         box-shadow: 0 20px 60px rgba(0,0,0,0.9);
         opacity: 0;
         visibility: hidden;
@@ -168,6 +181,17 @@ st.markdown("""
     .img-container:hover .img-expanded {
         opacity: 1;
         visibility: visible;
+    }
+    
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .dish-german, .dish-english {
+            font-size: 1rem;
+        }
+        .dish-thumb {
+            width: 100px;
+            height: 75px;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -222,41 +246,37 @@ def get_dish_image(query: str) -> str:
     return image_search.search_image(query)
 
 
-def display_menu_item(item: MenuItem, show_image: bool = True, item_index: int = 0):
-    """Display a single menu item with translation and image."""
+def display_menu_item(item: MenuItem, provider_name: str, show_image: bool = True):
+    """Display a single menu item with translation, location, and image."""
+    import html
     
     # Translate if not already translated
     if not item.name_english:
         item.name_english = translate_text(item.name_german)
     
-    col1, col2 = st.columns([2, 1])
+    # Escape HTML special characters in text
+    name_german_safe = html.escape(item.name_german)
+    name_english_safe = html.escape(item.name_english)
+    provider_safe = html.escape(provider_name)
     
-    with col1:
-        # German name
-        st.markdown(f'<p class="dish-german">🇦🇹 {item.name_german}</p>', unsafe_allow_html=True)
-        # English translation - same size
-        st.markdown(f'<p class="dish-english">🇬🇧 {item.name_english}</p>', unsafe_allow_html=True)
-        # Price if available
-        if item.price:
-            st.markdown(f'<p class="dish-price">💰 {item.price}</p>', unsafe_allow_html=True)
+    # Get image URL
+    image_url = ""
+    if show_image:
+        image_url = get_dish_image(item.name_german)
     
-    with col2:
-        if show_image:
-            image_url = get_dish_image(item.name_german)
-            if image_url:
-                try:
-                    # Display thumbnail with hover-to-expand overlay
-                    st.markdown(
-                        f'''<div class="img-container">
-                            <img src="{image_url}" class="dish-thumb" alt="{item.name_german}">
-                            <img src="{image_url}" class="img-expanded" alt="{item.name_german}">
-                        </div>''',
-                        unsafe_allow_html=True
-                    )
-                except Exception:
-                    pass
+    # Build image HTML
+    image_html = ""
+    if image_url:
+        image_html = f'''<div class="img-container"><img src="{html.escape(image_url)}" class="dish-thumb" alt="{name_german_safe}"><img src="{html.escape(image_url)}" class="img-expanded" alt="{name_german_safe}"></div>'''
     
-    st.markdown("<hr>", unsafe_allow_html=True)
+    # Build price HTML
+    price_html = f'<p class="dish-price">💰 {html.escape(item.price)}</p>' if item.price else ''
+    
+    # Render dish row with flexbox layout
+    st.markdown(
+        f'''<div class="dish-row"><div class="dish-text"><p class="dish-german">🇦🇹 {name_german_safe}</p><p class="dish-english">🇬🇧 {name_english_safe}</p><p class="dish-location">📍 {provider_safe}</p>{price_html}</div>{image_html}</div>''',
+        unsafe_allow_html=True
+    )
 
 
 def main():
@@ -307,13 +327,13 @@ def main():
             menu = get_provider_menu(provider, selected_day)
             
             if menu.items:
-                for idx, item in enumerate(menu.items):
-                    display_menu_item(item, show_image=show_images, item_index=idx)
+                for item in menu.items:
+                    display_menu_item(item, provider_name=provider.name, show_image=show_images)
             else:
-                st.markdown('<p style="color: #888; font-size: 1rem;">No menu available for this day</p>', unsafe_allow_html=True)
+                st.markdown('<p style="color: #888; font-size: 0.9rem;">No menu available for this day</p>', unsafe_allow_html=True)
                 
         except Exception as e:
-            st.markdown(f'<p style="color: #ff6b6b; font-size: 1rem;">Error loading menu</p>', unsafe_allow_html=True)
+            st.markdown(f'<p style="color: #ff6b6b; font-size: 0.9rem;">Error loading menu</p>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
