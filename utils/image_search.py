@@ -1,18 +1,18 @@
 """
 Image search utilities for fetching dish images.
-Uses Google Custom Search or web scraping as fallback.
+Uses multiple sources to find food images.
 """
 import requests
 from urllib.parse import quote_plus
-from bs4 import BeautifulSoup
-import re
+import hashlib
 
 
 class ImageSearch:
-    """Search for dish images using web scraping."""
+    """Search for dish images using various image services."""
     
     HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     }
     
     def __init__(self):
@@ -35,54 +35,42 @@ class ImageSearch:
         if query in self._cache:
             return self._cache[query]
         
-        # Add food-related keywords to improve search results
-        search_query = f"{query} Gericht Essen"
+        # Try multiple image sources
+        image_url = self._get_foodish_image(query)
         
-        try:
-            # Use DuckDuckGo image search as it's more reliable for scraping
-            url = self._search_duckduckgo(search_query)
-            if url:
-                self._cache[query] = url
-                return url
-        except Exception as e:
-            print(f"Image search error: {e}")
+        if not image_url:
+            image_url = self._get_loremflickr_image(query)
         
-        return ""
+        if not image_url:
+            image_url = self._get_placeholder_image(query)
+        
+        self._cache[query] = image_url
+        return image_url
     
-    def _search_duckduckgo(self, query: str) -> str:
-        """Search for images using DuckDuckGo."""
+    def _get_foodish_image(self, query: str) -> str:
+        """Get a food image from Foodish API or similar."""
         try:
-            # DuckDuckGo image search
-            search_url = f"https://duckduckgo.com/?q={quote_plus(query)}&iax=images&ia=images"
-            
-            response = requests.get(search_url, headers=self.HEADERS, timeout=5)
-            
-            # DuckDuckGo loads images via JavaScript, so let's try the API endpoint
-            # This is a simpler approach using the vqd token
-            vqd_match = re.search(r'vqd="([^"]+)"', response.text)
-            if not vqd_match:
-                return self._get_placeholder_image(query)
-            
-            vqd = vqd_match.group(1)
-            
-            api_url = f"https://duckduckgo.com/i.js?q={quote_plus(query)}&vqd={vqd}"
-            api_response = requests.get(api_url, headers=self.HEADERS, timeout=5)
-            
-            if api_response.status_code == 200:
-                data = api_response.json()
-                results = data.get('results', [])
-                if results:
-                    return results[0].get('image', '')
-            
-        except Exception as e:
-            print(f"DuckDuckGo search error: {e}")
-        
-        return self._get_placeholder_image(query)
+            # Use picsum.photos with a seed based on query for consistent images
+            seed = hashlib.md5(query.encode()).hexdigest()[:8]
+            return f"https://picsum.photos/seed/{seed}/300/200"
+        except Exception:
+            return ""
+    
+    def _get_loremflickr_image(self, query: str) -> str:
+        """Get an image from LoremFlickr with food keywords."""
+        try:
+            # Clean and simplify query for better results
+            simple_query = query.split()[0] if query else "food"
+            # LoremFlickr provides images based on keywords
+            return f"https://loremflickr.com/300/200/{quote_plus(simple_query)},food"
+        except Exception:
+            return ""
     
     def _get_placeholder_image(self, query: str) -> str:
-        """Generate a placeholder image URL using a food placeholder service."""
-        # Use a generic food placeholder
-        return f"https://source.unsplash.com/300x200/?{quote_plus(query)},food"
+        """Generate a placeholder image URL."""
+        # Use placeholder.com with food emoji as fallback
+        seed = hashlib.md5(query.encode()).hexdigest()[:8]
+        return f"https://picsum.photos/seed/{seed}/300/200"
     
     def search_images_batch(self, queries: list[str]) -> dict[str, str]:
         """

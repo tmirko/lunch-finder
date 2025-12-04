@@ -136,13 +136,44 @@ class NiceGuysProvider(MenuProvider):
         
         return weekly_menu
     
+    def _is_allergen_line(self, line: str) -> bool:
+        """Check if a line contains allergen information."""
+        # Common allergen codes and their descriptions
+        allergen_patterns = [
+            # Single letter codes followed by allergen names
+            r'\b[A-R]\s+(Gluten|Krebstiere|Eier|Fisch|Erdnüsse|Sojabohnen|Milch|Schalenfrüchte|Sellerie|Senf|Sesam|Sulfite|Lupinen|Weichtiere)',
+            # Multiple allergen codes in sequence (e.g., "A G M O")
+            r'^[A-R](\s+[A-R]){2,}',
+            # Lines that are mostly single letters with spaces
+            r'^([A-R]\s+\w+\s+){2,}',
+        ]
+        
+        for pattern in allergen_patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                return True
+        
+        # Check for high concentration of single capital letters (allergen codes)
+        # Pattern: letter followed by space and a word, repeated
+        allergen_code_pattern = r'[A-R]\s+\w+'
+        matches = re.findall(allergen_code_pattern, line)
+        if len(matches) >= 3:
+            # If we have 3+ potential allergen codes, likely an allergen line
+            return True
+        
+        return False
+    
     def _parse_menu_item(self, line: str) -> Optional[MenuItem]:
         """Parse a single line into a MenuItem."""
+        # Skip allergen information lines
+        if self._is_allergen_line(line):
+            return None
+        
         # Skip empty lines and common non-food items
         skip_patterns = [
             'wochenmenu', 'weekly', 'menu', 'nice guys', 'www.', 
             'http', 'tel:', 'fax:', 'email', '@', 'reservierung',
-            'öffnungszeiten', 'opening', 'closed', 'geschlossen'
+            'öffnungszeiten', 'opening', 'closed', 'geschlossen',
+            'allergene', 'allergen', 'enthält', 'contains'
         ]
         
         line_lower = line.lower()
