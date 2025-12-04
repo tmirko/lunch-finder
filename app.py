@@ -93,16 +93,16 @@ st.markdown("""
         padding: 0;
         line-height: 1.3;
     }
-    .dish-location {
+    .dish-meta {
         font-size: 0.8rem;
-        color: #6c9fff;
         margin: 0.2rem 0 0 0;
         padding: 0;
     }
     .dish-price {
-        font-size: 0.85rem;
         color: #ffd700;
-        margin: 0.2rem 0 0 0;
+    }
+    .dish-location {
+        color: #6c9fff;
     }
     
     /* Links */
@@ -281,12 +281,13 @@ def display_menu_item(item: MenuItem, provider_name: str, show_image: bool = Tru
     if image_url:
         image_html = f'''<div class="img-container"><img src="{html.escape(image_url)}" class="dish-thumb" alt="{name_german_safe}"><img src="{html.escape(image_url)}" class="img-expanded" alt="{name_german_safe}"></div>'''
     
-    # Build price HTML
-    price_html = f'<p class="dish-price">💰 {html.escape(item.price)}</p>' if item.price else ''
+    # Build price and location line (price first, then location)
+    price_part = f'<span class="dish-price">💰 {html.escape(item.price)}</span> · ' if item.price else ''
+    meta_html = f'<p class="dish-meta">{price_part}<span class="dish-location">📍 {provider_safe}</span></p>'
     
     # Render dish row with flexbox layout
     st.markdown(
-        f'''<div class="dish-row"><div class="dish-text"><p class="dish-german">🇦🇹 {name_german_safe}</p><p class="dish-english">🇬🇧 {name_english_safe}</p><p class="dish-location">📍 {provider_safe}</p>{price_html}</div>{image_html}</div>''',
+        f'''<div class="dish-row"><div class="dish-text"><p class="dish-german">🇦🇹 {name_german_safe}</p><p class="dish-english">🇬🇧 {name_english_safe}</p>{meta_html}</div>{image_html}</div>''',
         unsafe_allow_html=True
     )
 
