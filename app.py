@@ -16,7 +16,7 @@ from utils import Translator, ImageSearch
 
 # Page configuration
 st.set_page_config(
-    page_title="🍽️ Lunch Finder",
+    page_title="Lunch Finder",
     page_icon="🍽️",
     layout="wide",
     initial_sidebar_state="expanded"
