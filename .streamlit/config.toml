@@ -1,11 +1,12 @@
 [theme]
-primaryColor = "#667eea"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f2f6"
-textColor = "#262730"
+base = "dark"
+primaryColor = "#6c9fff"
+backgroundColor = "#1a1a2e"
+secondaryBackgroundColor = "#2d2d44"
+textColor = "#eaeaea"
 font = "sans serif"
 
 [server]
 headless = true
-enableCORS = false
-enableXsrfProtection = true
+enableCORS = true
+enableXsrfProtection = false
