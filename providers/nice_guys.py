@@ -98,8 +98,9 @@ class NiceGuysProvider(MenuProvider):
                     break
             
             if day_found:
-                # Save previous day's items
+                # Save previous day's items with correct prices
                 if current_day_english and current_items:
+                    self._assign_prices(current_items)
                     weekly_menu[current_day_english] = DailyMenu(
                         day=current_day_english,
                         items=current_items,
@@ -128,6 +129,7 @@ class NiceGuysProvider(MenuProvider):
         
         # Don't forget the last day
         if current_day_english and current_items:
+            self._assign_prices(current_items)
             weekly_menu[current_day_english] = DailyMenu(
                 day=current_day_english,
                 items=current_items,
@@ -135,6 +137,21 @@ class NiceGuysProvider(MenuProvider):
             )
         
         return weekly_menu
+    
+    def _assign_prices(self, items: list[MenuItem]) -> None:
+        """Assign prices to menu items based on their order.
+        
+        First dish (Tagesteller): €11.20
+        Second dish (Tagesteller vegetarisch): €10.30
+        """
+        for i, item in enumerate(items):
+            if item.price is None:
+                if i == 0:
+                    item.price = "€11.20"  # Tagesteller
+                elif i == 1:
+                    item.price = "€10.30"  # Tagesteller vegetarisch
+                else:
+                    item.price = "€11.20"  # Default for any additional items
     
     def _is_allergen_line(self, line: str) -> bool:
         """Check if a line contains allergen information."""

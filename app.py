@@ -112,8 +112,7 @@ st.markdown("""
         text-decoration: none;
     }
     
-    /* Hide Streamlit branding but keep header */
-    #MainMenu {visibility: hidden;}
+    /* Hide Streamlit footer only */
     footer {visibility: hidden;}
     
     /* Hide default streamlit padding */
