@@ -1,18 +1,19 @@
 """
 Image search utilities for fetching dish images.
-Uses multiple sources to find food images.
+Uses Google Images search to find relevant food images.
 """
 import requests
 from urllib.parse import quote_plus
-import hashlib
+import re
 
 
 class ImageSearch:
-    """Search for dish images using various image services."""
+    """Search for dish images using Google Images."""
     
     HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
     }
     
     def __init__(self):
@@ -20,7 +21,7 @@ class ImageSearch:
     
     def search_image(self, query: str) -> str:
         """
-        Search for an image based on the query.
+        Search for an image based on the query using Google Images.
         
         Args:
             query: Search query (dish name in German)
@@ -35,42 +36,84 @@ class ImageSearch:
         if query in self._cache:
             return self._cache[query]
         
-        # Try multiple image sources
-        image_url = self._get_foodish_image(query)
+        # Try Google Images search
+        image_url = self._search_google_images(query)
         
-        if not image_url:
-            image_url = self._get_loremflickr_image(query)
+        if image_url:
+            self._cache[query] = image_url
+            return image_url
         
-        if not image_url:
-            image_url = self._get_placeholder_image(query)
-        
-        self._cache[query] = image_url
-        return image_url
+        return ""
     
-    def _get_foodish_image(self, query: str) -> str:
-        """Get a food image from Foodish API or similar."""
+    def _search_google_images(self, query: str) -> str:
+        """Search Google Images and extract the first result."""
         try:
-            # Use picsum.photos with a seed based on query for consistent images
-            seed = hashlib.md5(query.encode()).hexdigest()[:8]
-            return f"https://picsum.photos/seed/{seed}/300/200"
-        except Exception:
-            return ""
+            # Add "Gericht" (dish) to improve food-related results
+            search_query = f"{query} Gericht"
+            
+            # Google Images search URL
+            url = f"https://www.google.com/search?q={quote_plus(search_query)}&tbm=isch&hl=de"
+            
+            response = requests.get(url, headers=self.HEADERS, timeout=10)
+            response.raise_for_status()
+            
+            # Google embeds image URLs in the page in various formats
+            # Look for image URLs in the response
+            
+            # Pattern 1: Look for direct image URLs in data attributes
+            # Google uses base64 encoded data and actual URLs
+            patterns = [
+                # Match image URLs from Google's image data
+                r'\["(https?://[^"]+\.(?:jpg|jpeg|png|webp))[^"]*",\d+,\d+\]',
+                # Alternative pattern for image sources
+                r'"ou":"(https?://[^"]+)"',
+                # Another common pattern
+                r'src="(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text, re.IGNORECASE)
+                for match in matches:
+                    # Filter out Google's own URLs and thumbnails
+                    if self._is_valid_image_url(match):
+                        return match
+            
+            # Fallback: Try to find any reasonable image URL
+            all_urls = re.findall(r'https?://[^\s"\'<>]+\.(?:jpg|jpeg|png|webp)', response.text, re.IGNORECASE)
+            for url in all_urls:
+                if self._is_valid_image_url(url):
+                    return url
+                    
+        except Exception as e:
+            print(f"Google Images search error: {e}")
+        
+        return ""
     
-    def _get_loremflickr_image(self, query: str) -> str:
-        """Get an image from LoremFlickr with food keywords."""
-        try:
-            # Clean and simplify query for better results
-            simple_query = query.split()[0] if query else "food"
-            # LoremFlickr provides images based on keywords
-            return f"https://loremflickr.com/300/200/{quote_plus(simple_query)},food"
-        except Exception:
-            return ""
-    
-    def _get_placeholder_image(self, query: str) -> str:
-        """Generate a placeholder image URL."""
-        # Use placeholder.com with food emoji as fallback
-        seed = hashlib.md5(query.encode()).hexdigest()[:8]
-        return f"https://picsum.photos/seed/{seed}/300/200"
+    def _is_valid_image_url(self, url: str) -> bool:
+        """Check if URL is a valid external image (not Google's internal)."""
+        if not url:
+            return False
+        
+        # Skip Google's own domains and encrypted thumbnails
+        skip_domains = [
+            'google.com',
+            'gstatic.com', 
+            'googleapis.com',
+            'googleusercontent.com',
+            'encrypted-tbn',
+            'data:image',
+        ]
+        
+        url_lower = url.lower()
+        for domain in skip_domains:
+            if domain in url_lower:
+                return False
+        
+        # Must be a reasonable length (not too short, not too long)
+        if len(url) < 20 or len(url) > 500:
+            return False
+            
+        return True
     
     def search_images_batch(self, queries: list[str]) -> dict[str, str]:
         """

@@ -108,7 +108,7 @@ def translate_text(text: str) -> str:
     return translator.translate(text)
 
 
-@st.cache_data(ttl=86400)  # Cache images for 24 hours  
+@st.cache_data(ttl=3600)  # Cache images for 1 hour  
 def get_dish_image(query: str) -> str:
     """Get image URL for a dish."""
     image_search = get_image_search()
