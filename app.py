@@ -10,7 +10,7 @@ import os
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from providers import NiceGuysProvider, MenuItem, DailyMenu
+from providers import NiceGuysProvider, FoodGardenProvider, MenuItem, DailyMenu
 from utils import Translator, ImageSearch
 
 
@@ -226,10 +226,23 @@ def get_image_search() -> ImageSearch:
     return ImageSearch()
 
 
+@st.cache_resource
+def get_providers():
+    """Get cached provider instances."""
+    return {
+        "The Nice Guys": NiceGuysProvider(),
+        "Food Garden": FoodGardenProvider(),
+    }
+
+
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_provider_menu(_provider, day: str) -> DailyMenu:
+def get_provider_menu(provider_name: str, day: str) -> DailyMenu:
     """Get cached menu for a provider and day."""
-    return _provider.get_menu(day)
+    providers = get_providers()
+    provider = providers.get(provider_name)
+    if provider:
+        return provider.get_menu(day)
+    return DailyMenu(day=day, items=[], provider_name=provider_name)
 
 
 @st.cache_data(ttl=86400)  # Cache translations for 24 hours
@@ -282,6 +295,9 @@ def display_menu_item(item: MenuItem, provider_name: str, show_image: bool = Tru
 def main():
     """Main application."""
     
+    # Get cached providers
+    providers = get_providers()
+    
     # Sidebar with all controls
     with st.sidebar:
         st.markdown('<p class="sidebar-header">🍽️ Lunch Finder</p>', unsafe_allow_html=True)
@@ -315,25 +331,22 @@ def main():
         
         # Providers info
         st.markdown("**Restaurants**")
-        providers = [
-            NiceGuysProvider(),
-        ]
-        for provider in providers:
+        for name, provider in providers.items():
             st.markdown(f"📍 [{provider.name}]({provider.url})")
     
     # Main content - dishes only
-    for provider in providers:
+    for provider_name, provider in providers.items():
         try:
-            menu = get_provider_menu(provider, selected_day)
+            menu = get_provider_menu(provider_name, selected_day)
             
             if menu.items:
                 for item in menu.items:
-                    display_menu_item(item, provider_name=provider.name, show_image=show_images)
+                    display_menu_item(item, provider_name=provider_name, show_image=show_images)
             else:
-                st.markdown('<p style="color: #888; font-size: 0.9rem;">No menu available for this day</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="color: #888; font-size: 0.9rem;">No menu from {provider_name} for this day</p>', unsafe_allow_html=True)
                 
         except Exception as e:
-            st.markdown(f'<p style="color: #ff6b6b; font-size: 0.9rem;">Error loading menu</p>', unsafe_allow_html=True)
+            st.markdown(f'<p style="color: #ff6b6b; font-size: 0.9rem;">Error loading {provider_name} menu</p>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
