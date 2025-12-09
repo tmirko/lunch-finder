@@ -1,7 +1,7 @@
 """
 Food Garden menu provider.
 Fetches and parses the weekly menu from https://foodgarden.wien/wp-content/uploads/Foodgarden-Aloha-Bowl-Menu.pdf
-Uses OCR to extract text from image-based PDF.
+Uses column-based OCR extraction with dynamic day header detection for automatic weekly updates.
 """
 import requests
 import re
@@ -22,16 +22,18 @@ class FoodGardenProvider(MenuProvider):
     
     MENU_URL = "https://foodgarden.wien/wp-content/uploads/Foodgarden-Aloha-Bowl-Menu.pdf"
     
-    # German day names mapping
-    DAY_MAPPING = {
-        "Monday": "Montag",
-        "Tuesday": "Dienstag", 
-        "Wednesday": "Mittwoch",
-        "Thursday": "Donnerstag",
-        "Friday": "Freitag"
+    # Row boundaries (y coordinates at 300 DPI) - these are relatively stable
+    ROWS = {
+        'Dish_I': (820, 1180),      # Vegetarian dish row
+        'Dish_II': (1180, 1520),    # Meat dish row
     }
     
-    GERMAN_TO_ENGLISH_DAYS = {v: k for k, v in DAY_MAPPING.items()}
+    # Weekly special region (x1, y1, x2, y2)
+    WEEKLY_REGION = (700, 1520, 2200, 1750)
+    
+    # Prices
+    DISH_PRICE = "€8.90"
+    WEEKLY_PRICE = "€9.80"
     
     def __init__(self):
         self._weekly_menu: Optional[dict[str, DailyMenu]] = None
@@ -52,11 +54,9 @@ class FoodGardenProvider(MenuProvider):
         return self._weekly_menu.get(day, DailyMenu(day=day, items=[], provider_name=self.name))
     
     def fetch_weekly_menu(self) -> dict[str, DailyMenu]:
-        """Fetch and parse the weekly menu PDF using OCR."""
+        """Fetch and parse the weekly menu PDF using column-based OCR."""
         if not OCR_AVAILABLE:
             print("OCR not available - pdf2image and pytesseract required")
-            print("Install with: pip install pdf2image pytesseract")
-            print("Also need system package: sudo apt install tesseract-ocr tesseract-ocr-deu")
             return self._empty_weekly_menu()
         
         try:
@@ -67,97 +67,94 @@ class FoodGardenProvider(MenuProvider):
             response = requests.get(self.MENU_URL, timeout=15, headers=headers)
             response.raise_for_status()
             
-            # Convert PDF to images at higher DPI for better OCR
+            # Convert PDF to image at 300 DPI
             images = convert_from_bytes(response.content, dpi=300)
             
-            # OCR each page
-            full_text = ""
-            for img in images:
-                # Use German language for better recognition
-                # Also try with psm 6 (assume uniform block of text) for better table handling
-                text = pytesseract.image_to_string(img, lang='deu', config='--psm 6')
-                full_text += text + "\n"
+            if not images:
+                print("No pages found in PDF")
+                return self._empty_weekly_menu()
             
-            return self._parse_menu_text(full_text)
+            # Process the first (and usually only) page
+            return self._extract_menu_from_image(images[0])
             
         except requests.RequestException as e:
             print(f"Error fetching Food Garden menu: {e}")
             return self._empty_weekly_menu()
         except Exception as e:
-            print(f"Error parsing Food Garden menu with OCR: {e}")
+            print(f"Error parsing Food Garden menu: {e}")
             import traceback
             traceback.print_exc()
             return self._empty_weekly_menu()
     
-    def _empty_weekly_menu(self) -> dict[str, DailyMenu]:
-        """Return empty menu structure."""
-        return {
-            day: DailyMenu(day=day, items=[], provider_name=self.name)
-            for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-        }
-    
-    def _parse_menu_text(self, text: str) -> dict[str, DailyMenu]:
-        """Parse the OCR extracted text into menu items.
+    def _extract_menu_from_image(self, img) -> dict[str, DailyMenu]:
+        """Extract menu by dynamically finding day columns and OCR'ing each cell."""
+        weekly_menu = {}
         
-        The PDF has a table structure with days as columns and dish rows.
-        OCR reads it row by row, so dishes for all days appear on the same line.
-        We search for known dish patterns and map them to their days.
-        """
-        weekly_menu = self._empty_weekly_menu()
+        # Find day column boundaries dynamically
+        columns = self._find_day_columns(img)
         
-        # The OCR output has dishes appearing in rows like:
-        # "Linsen-Kokos-Curry NF Rotkrautstrudel ACGO Vegane Ravioli..."
-        # These are Mon, Tue, Wed, Thu, Fri in order
+        if not columns:
+            print("Could not find day columns in the menu")
+            return self._empty_weekly_menu()
         
-        # Define dish patterns to search for - each tuple is (pattern, day, dish_name, ingredients)
-        # Using flexible patterns to handle OCR variations
-        dish_patterns = [
-            # Dish I row - vegetarian dishes (left to right = Mon to Fri)
-            (r'Linsen.?Kokos.?Curry', "Monday", "Linsen-Kokos-Curry", "Rote Linsen, Süßkartoffel, Basmatireis, Koriander", "€8.90"),
-            (r'Rotkrautstrudel', "Tuesday", "Rotkrautstrudel", "Ziegenkäse, Schnittlauch-Rahm-Dip, frischer Rucola", "€8.90"),
-            (r'Vegane\s*Ravioli|Triangolo\s*Portobello', "Wednesday", "Vegane Ravioli Triangolo", "Portobello, leichte Kräutersauce, Grana Padano", "€8.90"),
-            (r'Kürbis.?Spinat.?Lasagne', "Thursday", "Kürbis-Spinat-Lasagne", "Schafkäse, Kürbiskerne, Blattsalat, Hausdressing", "€8.90"),
-            (r'Ebly.?Gemüse.?Risotto', "Friday", "Ebly-Gemüse-Risotto", "Wurzelgemüse, Kürbis, getrocknete Paradeiser", "€8.90"),
+        # Extract weekly special (same for all days)
+        weekly_special = self._extract_weekly_special(img)
+        
+        # Extract dishes for each day
+        for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
+            if day not in columns:
+                weekly_menu[day] = DailyMenu(day=day, items=[], provider_name=self.name)
+                continue
             
-            # Dish II row - meat dishes
-            (r'Spaghetti\s*Carbonara', "Monday", "Spaghetti Carbonara", "Zwiebel, Speck, Ei, Grana Padano, frische Petersilie", "€8.90"),
-            (r'Cordon\s*Bleu', "Tuesday", "Cordon Bleu von der Pute", "Petersilerdäpfel, Preiselbeeren, Bio-Zitrone", "€8.90"),
-            (r'[CĆČ]evap[ceč]i[cč]i', "Wednesday", "Cevapcici", "Potato Wedges, Ajvar, Zwiebelsenf, Minz-Dip", "€8.90"),
-            (r'Chicken\s*Tikka\s*Masala', "Thursday", "Chicken Tikka Masala", "Jasminreis, Kichererbsen, gehackte Cashewnüsse", "€8.90"),
-            (r'Sayadiya|[Ss]eehechtfil', "Friday", "Sayadiya - gebratenes Seehechtfilet", "orientalischer Gewürzreis, karamellisierte Zwiebeln", "€8.90"),
-        ]
-        
-        # Weekly special - available every day
-        weekly_special_pattern = r'Hirschragout'
-        weekly_special_name = "Hirschragout (Weekly Special)"
-        weekly_special_ingredients = "Serviettenknödel, Preiselbeeren"
-        weekly_special_price = "€9.80"
-        
-        all_dishes = {day: [] for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]}
-        
-        for pattern, day, dish_name, ingredients, price in dish_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                full_name = f"{dish_name} ({ingredients})"
-                all_dishes[day].append(MenuItem(
-                    name_german=full_name,
+            x1, x2 = columns[day]
+            items = []
+            is_holiday = False
+            
+            # Extract vegetarian dish (Dish I)
+            veggie_dish = self._extract_cell(img, x1, x2, self.ROWS['Dish_I'])
+            if veggie_dish:
+                if 'HOLIDAY' in veggie_dish:
+                    is_holiday = True
+                else:
+                    items.append(MenuItem(
+                        name_german=veggie_dish,
+                        name_english="",
+                        price=self.DISH_PRICE,
+                        description="Dish I (Vegetarian)"
+                    ))
+            
+            # Extract meat dish (Dish II)
+            if not is_holiday:
+                meat_dish = self._extract_cell(img, x1, x2, self.ROWS['Dish_II'])
+                if meat_dish:
+                    items.append(MenuItem(
+                        name_german=meat_dish,
+                        name_english="",
+                        price=self.DISH_PRICE,
+                        description="Dish II (Meat/Fish)"
+                    ))
+            
+            # Add weekly special (same for all days)
+            if not is_holiday and weekly_special:
+                items.append(MenuItem(
+                    name_german=weekly_special,
                     name_english="",
-                    price=price
+                    price=self.WEEKLY_PRICE,
+                    description="Weekly Special"
                 ))
-        
-        # Add weekly special to all days if found
-        if re.search(weekly_special_pattern, text, re.IGNORECASE):
-            for day in all_dishes.keys():
-                full_name = f"{weekly_special_name} ({weekly_special_ingredients})"
-                all_dishes[day].append(MenuItem(
-                    name_german=full_name,
-                    name_english="",
-                    price=weekly_special_price
-                ))
-        
-        # Build the weekly menu
-        for day, items in all_dishes.items():
-            if items:
+            
+            if is_holiday:
+                weekly_menu[day] = DailyMenu(
+                    day=day,
+                    items=[MenuItem(
+                        name_german="Feiertag - Geschlossen",
+                        name_english="Holiday - Closed",
+                        price=None,
+                        description=""
+                    )],
+                    provider_name=self.name
+                )
+            else:
                 weekly_menu[day] = DailyMenu(
                     day=day,
                     items=items,
@@ -165,3 +162,151 @@ class FoodGardenProvider(MenuProvider):
                 )
         
         return weekly_menu
+    
+    def _find_day_columns(self, img) -> dict[str, tuple[int, int]]:
+        """Dynamically find day column boundaries from header positions."""
+        data = pytesseract.image_to_data(img, lang='deu', output_type=pytesseract.Output.DICT)
+        
+        day_headers = {}
+        days_map = {
+            'monday': 'Monday', 'tuesday': 'Tuesday', 'wednesday': 'Wednesday',
+            'thursday': 'Thursday', 'friday': 'Friday',
+            'montag': 'Monday', 'dienstag': 'Tuesday', 'mittwoch': 'Wednesday',
+            'donnerstag': 'Thursday', 'freitag': 'Friday'
+        }
+        
+        for i, word in enumerate(data['text']):
+            w_lower = word.lower().strip()
+            if w_lower in days_map:
+                x = data['left'][i]
+                width = data['width'][i]
+                y = data['top'][i]
+                # Only consider headers in the top portion (y < 800)
+                if y < 800:
+                    day_headers[days_map[w_lower]] = x + width // 2
+        
+        if len(day_headers) < 3:
+            return {}
+        
+        # Sort by x position and calculate boundaries
+        sorted_days = sorted(day_headers.items(), key=lambda x: x[1])
+        img_width = img.size[0]
+        
+        columns = {}
+        for i, (day, center_x) in enumerate(sorted_days):
+            if i == 0:
+                left = 700  # Start after row labels
+            else:
+                prev_center = sorted_days[i-1][1]
+                left = (prev_center + center_x) // 2
+            
+            if i == len(sorted_days) - 1:
+                right = img_width - 200
+            else:
+                next_center = sorted_days[i+1][1]
+                right = (center_x + next_center) // 2
+            
+            columns[day] = (left, right)
+        
+        return columns
+    
+    def _extract_cell(self, img, x1: int, x2: int, y_range: tuple[int, int]) -> Optional[str]:
+        """Extract and clean text from a specific cell."""
+        y1, y2 = y_range
+        cell_img = img.crop((x1, y1, x2, y2))
+        cell_text = pytesseract.image_to_string(cell_img, lang='deu', config='--psm 6')
+        
+        # Check for holiday
+        if 'holiday' in cell_text.lower() or 'feiertag' in cell_text.lower():
+            return "HOLIDAY"
+        
+        return self._clean_dish_text(cell_text)
+    
+    def _extract_weekly_special(self, img) -> Optional[str]:
+        """Extract the weekly special dish."""
+        # Weekly special is typically in the center-left area of the menu
+        region = (1200, 1520, 2800, 1750)
+        weekly_img = img.crop(region)
+        weekly_text = pytesseract.image_to_string(weekly_img, lang='deu', config='--psm 4')
+        
+        lines = [l.strip() for l in weekly_text.split('\n') if l.strip()]
+        if not lines:
+            return None
+        
+        # First non-empty line is usually the main dish name
+        main_dish = None
+        ingredients = []
+        
+        for line in lines:
+            # Skip kcal lines
+            if 'kcal' in line.lower():
+                continue
+            
+            # Clean the line
+            cleaned = re.sub(r'\b[A-Z]{1,3}\b(?=\s|$|[|])', '', line)  # Remove allergen codes
+            cleaned = re.sub(r'[|]', ',', cleaned)  # Replace | with comma
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            
+            if not cleaned:
+                continue
+            
+            if main_dish is None:
+                main_dish = cleaned
+            else:
+                # This is the ingredients line
+                ingredients.append(cleaned)
+        
+        if main_dish:
+            if ingredients:
+                ingredient_text = ', '.join(ingredients)
+                # Clean up the ingredients - normalize spacing around commas
+                ingredient_text = re.sub(r'\s*,\s*', ', ', ingredient_text)
+                ingredient_text = re.sub(r',\s*,', ',', ingredient_text)
+                ingredient_text = re.sub(r'^\s*,|,\s*$', '', ingredient_text).strip()
+                return f"{main_dish} ({ingredient_text})"
+            return main_dish
+        
+        return None
+    
+    def _clean_dish_text(self, text: str) -> str:
+        """Clean OCR text to extract dish description."""
+        if not text:
+            return ""
+        
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        cleaned_parts = []
+        
+        for line in lines:
+            # Remove allergen codes (single/double uppercase letters)
+            line = re.sub(r'\b[A-Z]{1,3}\b(?=\s|$|[^a-zA-Z])', '', line)
+            # Remove kcal
+            line = re.sub(r'\d+\s*kcal', '', line, flags=re.IGNORECASE)
+            # Remove prices
+            line = re.sub(r'€?\d+[.,]\d{2}', '', line)
+            # Remove special characters
+            line = re.sub(r'[|/\\®©™\[\]{}()]', ' ', line)
+            # Clean whitespace
+            line = re.sub(r'\s+', ' ', line).strip()
+            
+            if line and len(line) >= 3:
+                alpha_count = sum(c.isalpha() for c in line)
+                if alpha_count >= len(line) * 0.4:
+                    cleaned_parts.append(line)
+        
+        result = ' '.join(cleaned_parts)
+        # Remove trailing fragments (single letters)
+        result = re.sub(r'\s+[a-z]{1,2}$', '', result)
+        # Remove leading numbers/fragments
+        result = re.sub(r'^[\d\s]+', '', result)
+        # Fix common OCR errors
+        result = re.sub(r'mitEi\b', 'mit Ei', result)
+        result = re.sub(r'Paprikahendernl', 'Paprikahendl', result)
+        
+        return result.strip()
+    
+    def _empty_weekly_menu(self) -> dict[str, DailyMenu]:
+        """Return empty menu structure."""
+        return {
+            day: DailyMenu(day=day, items=[], provider_name=self.name)
+            for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        }
