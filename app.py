@@ -10,7 +10,7 @@ import os
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from providers import NiceGuysProvider, FoodGardenProvider, MenuItem, DailyMenu
+from providers import NiceGuysProvider, FoodGardenProvider, TMarxProvider, MenuItem, DailyMenu
 from utils import Translator, ImageSearch
 
 
@@ -231,6 +231,7 @@ def get_providers():
     return {
         "The Nice Guys": NiceGuysProvider(),
         "Food Garden": FoodGardenProvider(),
+        "T-Marx by Eurest": TMarxProvider(),
     }
 
 
