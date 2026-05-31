@@ -1,62 +1,88 @@
 """
 Image search utilities for fetching dish images.
-Uses DuckDuckGo image search to find relevant food images.
+Uses Unsplash API to find relevant food images.
 """
 import time
-from ddgs import DDGS
+import requests
 
 
 class ImageSearch:
-    """Search for dish images using DuckDuckGo."""
-    
-    def __init__(self):
+    """Search for dish images using Unsplash API."""
+
+    def __init__(self, access_key: str):
         self._cache: dict[str, str] = {}
         self._last_request_time: float = 0
-    
-    def search_image(self, query: str) -> str:
+        self._access_key = access_key
+        self._base_url = "https://api.unsplash.com/search/photos"
+
+    def search_image(self, query: str, english_query: str = "") -> str:
         if not query:
             return ""
-        
-        if query in self._cache:
-            return self._cache[query]
-        
-        image_url = self._search_ddg_images(query)
-        
+
+        cache_key = query
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        search_query = self._build_search_query(query, english_query)
+        image_url = self._search_unsplash(search_query)
+
         if image_url:
-            self._cache[query] = image_url
+            self._cache[cache_key] = image_url
             return image_url
-        
+
         return ""
-    
-    def _search_ddg_images(self, query: str) -> str:
+
+    def _build_search_query(self, german_name: str, english_name: str) -> str:
+        if english_name:
+            return english_name
+        return german_name
+
+    def _search_unsplash(self, query: str) -> str:
         try:
             elapsed = time.time() - self._last_request_time
             if elapsed < 1.0:
                 time.sleep(1.0 - elapsed)
-            
-            search_query = f"{query} Gericht"
+
             self._last_request_time = time.time()
-            
-            with DDGS() as ddgs:
-                results = list(ddgs.images(search_query, max_results=3))
-                for result in results:
-                    image_url = result.get("image", "")
-                    if image_url and self._is_valid_image_url(image_url):
+
+            headers = {
+                "Authorization": f"Client-ID {self._access_key}",
+                "Accept-Version": "v1"
+            }
+
+            params = {
+                "query": query,
+                "per_page": 1,
+                "orientation": "landscape",
+                "content_filter": "high"
+            }
+
+            response = requests.get(
+                self._base_url,
+                headers=headers,
+                params=params,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get("results", [])
+                if results:
+                    image_url = results[0].get("urls", {}).get("regular", "")
+                    if image_url:
                         return image_url
+            elif response.status_code == 403:
+                print(f"Unsplash API rate limit exceeded for '{query}'")
+            elif response.status_code != 200:
+                print(f"Unsplash API error {response.status_code} for '{query}'")
+
+        except requests.exceptions.Timeout:
+            print(f"Unsplash API timeout for '{query}'")
         except Exception as e:
-            print(f"Image search error: {e}")
-        
+            print(f"Image search error for '{query}': {e}")
+
         return ""
-    
-    def _is_valid_image_url(self, url: str) -> bool:
-        if not url:
-            return False
-        if len(url) < 20 or len(url) > 500:
-            return False
-        if not url.startswith("http"):
-            return False
-        return True
-    
+
     def search_images_batch(self, queries: list[str]) -> dict[str, str]:
         results = {}
         for query in queries:

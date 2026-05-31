@@ -222,7 +222,11 @@ def get_translator() -> Translator:
 @st.cache_resource
 def get_image_search() -> ImageSearch:
     """Get cached image search instance."""
-    return ImageSearch()
+    access_key = st.secrets.get("UNSPLASH_ACCESS_KEY", "")
+    if not access_key:
+        st.warning("⚠️ Unsplash API key not configured. Images disabled.")
+        return None
+    return ImageSearch(access_key)
 
 
 @st.cache_resource
@@ -252,11 +256,13 @@ def translate_text(text: str) -> str:
     return translator.translate(text)
 
 
-@st.cache_data(ttl=3600)  # Cache images for 1 hour  
-def get_dish_image(query: str) -> str:
+@st.cache_data(ttl=86400)  # Cache images for 24 hours
+def get_dish_image(query: str, english_query: str = "") -> str:
     """Get image URL for a dish."""
     image_search = get_image_search()
-    return image_search.search_image(query)
+    if not image_search:
+        return ""
+    return image_search.search_image(query, english_query)
 
 
 def display_menu_item(item: MenuItem, provider_name: str, show_image: bool = True):
@@ -275,7 +281,7 @@ def display_menu_item(item: MenuItem, provider_name: str, show_image: bool = Tru
     # Get image URL
     image_url = ""
     if show_image:
-        image_url = get_dish_image(item.name_german)
+        image_url = get_dish_image(item.name_german, item.name_english)
     
     # Build image HTML
     image_html = ""

@@ -9,6 +9,15 @@ sudo apt install tesseract-ocr tesseract-ocr-deu poppler-utils  # macOS: brew in
 pip install -r requirements.txt
 ```
 
+### Unsplash API (for dish images)
+
+1. Sign up at https://unsplash.com/oauth/applications
+2. Create a new application to get an Access Key
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+4. Add your `UNSPLASH_ACCESS_KEY` to the file
+
+Free tier: 50 requests/hour. Images are cached for 1 day.
+
 ## Run
 
 ```bash
