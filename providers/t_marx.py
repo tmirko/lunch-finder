@@ -1,14 +1,13 @@
 """
 T-Marx by Eurest menu provider.
 Fetches and parses the weekly menu from https://menu.mitarbeiterrestaurant.at/menu/t-marx-by-eurest.pdf
-Uses column-based OCR extraction with pattern matching for automatic weekly updates.
+Uses cell-based OCR extraction for automatic weekly updates.
 """
 import requests
 import re
 from typing import Optional
 from providers.base import MenuProvider, MenuItem, DailyMenu
 
-# OCR imports
 try:
     from pdf2image import convert_from_bytes
     import pytesseract
@@ -22,8 +21,6 @@ class TMarxProvider(MenuProvider):
     
     MENU_URL = "https://menu.mitarbeiterrestaurant.at/menu/t-marx-by-eurest.pdf"
     
-    # Column boundaries (x coordinates at 300 DPI)
-    # Based on header positions: MONTAG=717, DIENSTAG=1269, MITTWOCH=1818, DONNERSTAG=2352, FREITAG=2961
     COLUMNS = {
         'Monday': (650, 1060),
         'Tuesday': (1060, 1625),
@@ -32,16 +29,28 @@ class TMarxProvider(MenuProvider):
         'Friday': (2770, 3508),
     }
     
-    # Content area (y coordinates at 300 DPI)
-    CONTENT_Y = (500, 1900)
+    ROWS = {
+        'Suppe': (570, 780),
+        'Daily': (780, 1010),
+        'Veggie': (1010, 1250),
+        'Bowl': (1250, 1490),
+        'Pasta': (1490, 1760),
+    }
     
-    # Category prices
     PRICES = {
-        'Suppe': '€2,50',
-        'Tagesteller': '€8,00 - €9,10',
-        'Vegetarisch': '€7,50 - €8,30',
-        'Bowl': '€7,80 - €8,70',
-        'Pasta & Co': '€8,20 - €9,60',
+        'Suppe': '€2,60',
+        'Daily': '€8,30 - €9,60',
+        'Veggie': '€7,80 - €8,75',
+        'Bowl': '€8,10 - €9,15',
+        'Pasta': '€8,50 - €11,75',
+    }
+    
+    DESCRIPTIONS = {
+        'Suppe': 'Suppe',
+        'Daily': 'Tagesteller',
+        'Veggie': 'Vegetarisch',
+        'Bowl': 'Bowl',
+        'Pasta': 'Pasta & Co',
     }
     
     def __init__(self):
@@ -56,39 +65,28 @@ class TMarxProvider(MenuProvider):
         return "https://menu.mitarbeiterrestaurant.at/menu/t-marx-by-eurest.pdf"
     
     def get_menu(self, day: str) -> DailyMenu:
-        """Get menu for a specific day."""
         if self._weekly_menu is None:
             self._weekly_menu = self.fetch_weekly_menu()
         
         return self._weekly_menu.get(day, DailyMenu(day=day, items=[], provider_name=self.name))
     
     def fetch_weekly_menu(self) -> dict[str, DailyMenu]:
-        """Fetch and parse the weekly menu using column-based OCR."""
         if not OCR_AVAILABLE:
             print("OCR not available - pdf2image and pytesseract required")
             return self._empty_weekly_menu()
         
         try:
-            # Download the PDF
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             response = requests.get(self.MENU_URL, timeout=15, headers=headers)
             response.raise_for_status()
             
-            # Convert PDF to images at 300 DPI
             images = convert_from_bytes(response.content, dpi=300)
             
-            # Find and process the German page
-            for img in images:
-                # Quick check if this is German page
-                sample_text = pytesseract.image_to_string(img.crop((0, 0, 500, 300)), lang='deu')
-                if 'Monday' in sample_text or 'Week' in sample_text or 'WEEK' in sample_text:
-                    continue
-                
-                # Process this German page
-                return self._extract_menu_from_image(img)
+            if not images:
+                print("No pages found in T-Marx PDF")
+                return self._empty_weekly_menu()
             
-            print("Could not find German menu page")
-            return self._empty_weekly_menu()
+            return self._extract_menu_from_image(images[0])
             
         except requests.RequestException as e:
             print(f"Error fetching T-Marx menu: {e}")
@@ -100,21 +98,45 @@ class TMarxProvider(MenuProvider):
             return self._empty_weekly_menu()
     
     def _extract_menu_from_image(self, img) -> dict[str, DailyMenu]:
-        """Extract menu by OCR'ing each day column and pattern matching."""
         weekly_menu = {}
         
         for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
             x1, x2 = self.COLUMNS[day]
-            y1, y2 = self.CONTENT_Y
+            items = []
+            is_holiday = False
             
-            # Crop and OCR the full column
-            col_img = img.crop((x1, y1, x2, y2))
-            col_text = pytesseract.image_to_string(col_img, lang='deu', config='--psm 4')
+            for category in ['Suppe', 'Daily', 'Veggie', 'Bowl', 'Pasta']:
+                y1, y2 = self.ROWS[category]
+                cell_img = img.crop((x1, y1, x2, y2))
+                cell_text = pytesseract.image_to_string(cell_img, lang='deu', config='--psm 6')
+                
+                if self._is_holiday(cell_text):
+                    is_holiday = True
+                    break
+                
+                if category == 'Bowl':
+                    if cell_text.strip():
+                        items.append(MenuItem(
+                            name_german="Create your own Bowl",
+                            name_english="",
+                            price=self.PRICES['Bowl'],
+                            description=self.DESCRIPTIONS['Bowl']
+                        ))
+                    continue
+                
+                dish_name = self._clean_cell_text(cell_text)
+                
+                if not dish_name:
+                    continue
+                
+                items.append(MenuItem(
+                    name_german=dish_name,
+                    name_english="",
+                    price=self.PRICES[category],
+                    description=self.DESCRIPTIONS[category]
+                ))
             
-            # Parse the column text
-            parsed = self._parse_column_text(col_text)
-            
-            if parsed.get('closed'):
+            if is_holiday:
                 weekly_menu[day] = DailyMenu(
                     day=day,
                     items=[MenuItem(
@@ -126,52 +148,6 @@ class TMarxProvider(MenuProvider):
                     provider_name=self.name
                 )
             else:
-                items = []
-                
-                # Add soup
-                if parsed.get('Suppe'):
-                    items.append(MenuItem(
-                        name_german=parsed['Suppe'],
-                        name_english="",
-                        price=self.PRICES['Suppe'],
-                        description="Suppe"
-                    ))
-                
-                # Add daily dish
-                if parsed.get('Daily'):
-                    items.append(MenuItem(
-                        name_german=parsed['Daily'],
-                        name_english="",
-                        price=self.PRICES['Tagesteller'],
-                        description="Tagesteller"
-                    ))
-                
-                # Add veggie dish
-                if parsed.get('Veggie'):
-                    items.append(MenuItem(
-                        name_german=parsed['Veggie'],
-                        name_english="",
-                        price=self.PRICES['Vegetarisch'],
-                        description="Vegetarisch"
-                    ))
-                
-                # Always add bowl option
-                items.append(MenuItem(
-                    name_german="Create your own Bowl",
-                    name_english="",
-                    price=self.PRICES['Bowl'],
-                    description="Bowl"
-                ))
-                
-                # Add pasta dish
-                if parsed.get('Pasta'):
-                    items.append(MenuItem(
-                        name_german=parsed['Pasta'],
-                        name_english="",
-                        price=self.PRICES['Pasta & Co'],
-                        description="Pasta & Co"
-                    ))
-                
                 weekly_menu[day] = DailyMenu(
                     day=day,
                     items=items,
@@ -180,111 +156,64 @@ class TMarxProvider(MenuProvider):
         
         return weekly_menu
     
-    def _parse_column_text(self, text: str) -> dict:
-        """Parse a column's OCR text to extract menu items by pattern matching."""
+    def _is_holiday(self, text: str) -> bool:
+        upper = text.upper()
+        return 'FEIERTAG' in upper or 'GESCHLOSSEN' in upper
+    
+    def _clean_cell_text(self, text: str) -> str:
         if not text:
-            return {}
+            return ""
         
         lines = [l.strip() for l in text.split('\n') if l.strip()]
-        full_text = ' '.join(lines)
+        cleaned_lines = []
         
-        # Check for closure
-        if 'FEIERTAG' in full_text.upper() or 'GESCHLOSSEN' in full_text.upper():
-            return {'closed': True}
+        for line in lines:
+            if re.match(r'^[€\d\s,.\|]+$', line):
+                continue
+            if re.search(r'\d+\s*kcal', line, re.IGNORECASE):
+                continue
+            if re.match(r'^[A-Z](,[A-Z])+\s*€', line):
+                continue
+            if re.match(r'^[A-Z](,[A-Z])+$', line):
+                continue
+            if 'create your own bowl' in line.lower():
+                continue
+            if 'topping' in line.lower() and ('wahl' in line.lower() or 'inklusive' in line.lower() or '+1' in line):
+                continue
+            if 'xl topping' in line.lower():
+                continue
+            if 'frischer nishikirei' in line.lower():
+                continue
+            
+            cleaned = re.sub(r'€\s*\d+[,\.]\d{2}', '', line)
+            cleaned = re.sub(r'\d+[,\.]\d{2}', '', cleaned)
+            cleaned = re.sub(r'\d+\s*kcal', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'\b[A-Z](,[A-Z])+\b', '', cleaned)
+            cleaned = re.sub(r'[|/][A-Z](,[A-Z])*', '', cleaned)
+            cleaned = re.sub(r'\(?\d+stk\.?\s*', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'[®©™\[\]{}]', '', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            cleaned = cleaned.strip(' .,;:-|/>@#*~`')
+            
+            if len(cleaned) >= 3:
+                alpha_count = sum(c.isalpha() or c.isspace() for c in cleaned)
+                if alpha_count >= len(cleaned) * 0.5:
+                    cleaned_lines.append(cleaned)
         
-        # Clean the text for pattern matching
-        clean_text = self._clean_text(full_text)
+        if not cleaned_lines:
+            return ""
         
-        result = {}
-        
-        # Extract soup (usually ends with "suppe" or is "Chef's choice")
-        soup_patterns = [
-            r'(Klare,?\s*kräftige\s*Rindssuppe)',
-            r'(Bohnensuppe)',
-            r'(Paradeisercremesuppe)',
-            r'(Grießnockerlsuppe)',
-            r'(Frittatensuppe)',
-            r'(Gemüsesuppe)',
-            r'([\w]+suppe)',
-            r'(Chefs?\s*choice)',
-        ]
-        for pattern in soup_patterns:
-            match = re.search(pattern, clean_text, re.IGNORECASE)
-            if match:
-                result['Suppe'] = match.group(1).strip()
-                break
-        
-        # Extract daily dish (main meat dish)
-        daily_patterns = [
-            (r'Gratinierte?\s*Schinkenfleckerl(?:\s*\(Schwein\))?', 'Gratinierte Schinkenfleckerl (Schwein) mit Blattsalat'),
-            (r'Gebackene[sr]?\s*Hühnerschnitzel', 'Gebackenes Hühnerschnitzel mit Beilage nach Wahl'),
-            (r'Schweinsschopfbraten\s*(?:im\s*)?(?:Natursaft)?', 'Schweinsschopfbraten im Natursaft mit Erdäpfelknödel'),
-            (r'Calamari\s*gebacken', 'Calamari gebacken mit Caesar Salat und Sauce Tartar'),
-            (r'Wiener\s*Schnitzel', 'Wiener Schnitzel mit Beilage nach Wahl'),
-            (r'Tafelspitz', 'Tafelspitz mit klassischen Beilagen'),
-            (r'Backhendl', 'Backhendl mit Erdäpfelsalat'),
-        ]
-        for pattern, full_name in daily_patterns:
-            if re.search(pattern, clean_text, re.IGNORECASE):
-                result['Daily'] = full_name
-                break
-        
-        # If no specific match, try to find generic daily
-        if 'Daily' not in result:
-            # Look for any dish followed by "Blattsalat" or "Beilage"
-            match = re.search(r'(\w+(?:\s+\w+)?)\s+(?:mit\s+)?(?:Blattsalat|Beilage)', clean_text, re.IGNORECASE)
-            if match:
-                result['Daily'] = match.group(0).strip()
-        
-        # Extract veggie dish
-        veggie_patterns = [
-            (r'Cremespinat\s*(?:mit\s*)?(?:Spiegelei)?', 'Cremespinat mit Spiegelei und Röstkartoffel'),
-            (r'Käsespätzle', 'Käsespätzle mit Röstzwiebeln und Blattsalat'),
-            (r'(?:Süß-?Saures?\s*)?Wokgemüse.*?Tofu', 'Süß-Saures Wokgemüse mit Jasminreis und gegrilltem Tofu'),
-            (r'Spinatknödel', 'Spinatknödel mit Salbeibutter'),
-            (r'Gemüsecurry', 'Gemüsecurry mit Reis'),
-            (r'Erdäpfelgulasch', 'Erdäpfelgulasch'),
-        ]
-        for pattern, full_name in veggie_patterns:
-            if re.search(pattern, clean_text, re.IGNORECASE):
-                result['Veggie'] = full_name
-                break
-        
-        # If Friday and no veggie found, might be "Chef's choice"
-        if 'Veggie' not in result and 'chefs choice' in clean_text.lower():
-            result['Veggie'] = "Chef's choice"
-        
-        # Extract pasta/special dish
-        pasta_patterns = [
-            (r'Pizza\s*Della\s*Casa', 'Pizza Della Casa'),
-            (r'Rosa\s*Kalbstafelspitz', 'Rosa Kalbstafelspitz mit Serviettenknödel und Waldpilzragout'),
-            (r'Frische\s*Pasta.*?(?:Rinderbolognese|Pesto)', 'Frische Pasta mit Rinderbolognese oder Pesto'),
-            (r'Rinderbolognese', 'Pasta mit Rinderbolognese'),
-            (r'Lasagne', 'Lasagne'),
-        ]
-        for pattern, full_name in pasta_patterns:
-            if re.search(pattern, clean_text, re.IGNORECASE):
-                result['Pasta'] = full_name
-                break
-        
+        result = ' '.join(cleaned_lines)
+        result = re.sub(r'\s+', ' ', result).strip()
+        result = re.sub(r'^[\d\s>]+', '', result).strip()
+        result = re.sub(r'^[a-z]{1,2}\s+', '', result).strip()
+        result = re.sub(r'[()]\s*', '', result)
+        result = re.sub(r'>\s*', '', result)
+        result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
+        result = re.sub(r'\s+', ' ', result).strip()
         return result
     
-    def _clean_text(self, text: str) -> str:
-        """Clean OCR text for pattern matching."""
-        # Remove allergen codes
-        text = re.sub(r'\b[A-Z](,[A-Z])+\b', '', text)
-        text = re.sub(r'[|/][A-Z](,[A-Z])*', '', text)
-        # Remove prices
-        text = re.sub(r'€\s*\d+[,\.]\d{2}', '', text)
-        text = re.sub(r'\d+[,\.]\d{2}', '', text)
-        # Remove kcal
-        text = re.sub(r'\d+\s*kcal', '', text, flags=re.IGNORECASE)
-        # Clean up whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-    
     def _empty_weekly_menu(self) -> dict[str, DailyMenu]:
-        """Return empty menu structure."""
         return {
             day: DailyMenu(day=day, items=[], provider_name=self.name)
             for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
