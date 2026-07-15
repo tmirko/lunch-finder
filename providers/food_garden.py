@@ -1,6 +1,6 @@
 """
 Food Garden menu provider.
-Fetches and parses the weekly menu from https://foodgarden.wien/wp-content/uploads/Foodgarden-Aloha-Bowl-Menu.pdf
+Fetches and parses the weekly menu from https://foodgarden.wien/wp-content/uploads/foodgarden-wochenkarte-1.pdf
 Uses column-based OCR extraction with dynamic day header detection for automatic weekly updates.
 """
 import requests
@@ -20,7 +20,7 @@ except ImportError:
 class FoodGardenProvider(MenuProvider):
     """Provider for Food Garden restaurant in Vienna."""
     
-    MENU_URL = "https://foodgarden.wien/wp-content/uploads/Foodgarden-Aloha-Bowl-Menu.pdf"
+    MENU_URL = "https://foodgarden.wien/wp-content/uploads/foodgarden-wochenkarte-1.pdf"
     
     # Row boundaries (y coordinates at 300 DPI) - these are relatively stable
     ROWS = {

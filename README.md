@@ -70,6 +70,9 @@ Then open `http://YOUR_COMPUTER_IP:8501` on your phone.
 ```
 lunch-finder/
 ├── app.py                 # Main Streamlit application
+├── tests/                 # Parser/debug checks
+│   ├── test_fg.py
+│   └── test_oak.py
 ├── requirements.txt       # Python dependencies
 ├── packages.txt           # System dependencies (for Streamlit Cloud)
 ├── providers/

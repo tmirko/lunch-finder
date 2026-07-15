@@ -26,7 +26,7 @@ streamlit run app.py
 
 ## Testing
 
-No test framework is configured. `test_fg.py` is a standalone debug script, not a test suite.
+No test framework is configured. `tests/test_fg.py` is a standalone debug script, not a test suite.
 
 ## Adding a provider
 

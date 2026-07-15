@@ -4,7 +4,7 @@ import requests
 import io
 from PyPDF2 import PdfReader
 
-url = 'https://foodgarden.wien/wp-content/uploads/Foodgarden-Aloha-Bowl-Menu.pdf'
+url = 'https://foodgarden.wien/wp-content/uploads/foodgarden-wochenkarte-1.pdf'
 headers = {'User-Agent': 'Mozilla/5.0'}
 
 try:
