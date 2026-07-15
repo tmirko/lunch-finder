@@ -3,6 +3,7 @@ Lunch Finder - A Streamlit app to find lunch menu options around your office.
 Designed for Vienna, Austria with German to English translations.
 """
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import sys
 import os
@@ -10,7 +11,7 @@ import os
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from providers import NiceGuysProvider, FoodGardenProvider, TMarxProvider, OakProvider, MenuItem, DailyMenu
+from providers import NiceGuysProvider, FoodGardenProvider, TMarxProvider, OakProvider, MenuItem
 from utils import Translator, ImageSearch
 
 
@@ -65,9 +66,9 @@ st.markdown("""
         display: flex;
         align-items: flex-start;
         gap: 0.5rem;
-        padding: 0.5rem 0;
+        padding: 0.3rem 0;
         border-bottom: 1px solid #2d2d44;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.2rem;
     }
     
     .dish-text {
@@ -77,7 +78,7 @@ st.markdown("""
     
     /* Dish names - compact for mobile */
     .dish-german {
-        font-size: 1.1rem;
+        font-size: 0.95rem;
         font-weight: 600;
         color: #ffffff;
         margin: 0;
@@ -85,7 +86,7 @@ st.markdown("""
         line-height: 1.3;
     }
     .dish-english {
-        font-size: 1.1rem;
+        font-size: 0.9rem;
         font-weight: 400;
         color: #a0a0a0;
         font-style: italic;
@@ -94,8 +95,8 @@ st.markdown("""
         line-height: 1.3;
     }
     .dish-meta {
-        font-size: 0.8rem;
-        margin: 0.2rem 0 0 0;
+        font-size: 0.75rem;
+        margin: 0.1rem 0 0 0;
         padding: 0;
     }
     .dish-price {
@@ -126,8 +127,8 @@ st.markdown("""
     }
     
     .dish-thumb {
-        width: 120px;
-        height: 90px;
+        width: 80px;
+        height: 60px;
         object-fit: cover;
         border-radius: 8px;
         cursor: pointer;
@@ -185,11 +186,11 @@ st.markdown("""
     /* Mobile responsive */
     @media (max-width: 768px) {
         .dish-german, .dish-english {
-            font-size: 1rem;
+            font-size: 0.9rem;
         }
         .dish-thumb {
-            width: 100px;
-            height: 75px;
+            width: 70px;
+            height: 52px;
         }
     }
 </style>
@@ -240,14 +241,17 @@ def get_providers():
     }
 
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_provider_menu(provider_name: str, day: str) -> DailyMenu:
-    """Get cached menu for a provider and day."""
-    providers = get_providers()
-    provider = providers.get(provider_name)
-    if provider:
-        return provider.get_menu(day)
-    return DailyMenu(day=day, items=[], provider_name=provider_name)
+def get_provider_menus(providers, day: str):
+    """Load each provider concurrently, retaining its display order."""
+    with ThreadPoolExecutor(max_workers=len(providers)) as executor:
+        futures = {name: executor.submit(provider.get_menu, day) for name, provider in providers.items()}
+        menus = {}
+        for name, future in futures.items():
+            try:
+                menus[name] = future.result()
+            except Exception:
+                menus[name] = None
+        return menus
 
 
 @st.cache_data(ttl=86400)  # Cache translations for 24 hours
@@ -342,19 +346,20 @@ def main():
         for name, provider in providers.items():
             st.markdown(f"📍 [{provider.name}]({provider.url})")
     
-    # Main content - dishes only
-    for provider_name, provider in providers.items():
-        try:
-            menu = get_provider_menu(provider_name, selected_day)
-            
-            if menu.items:
+    menus = get_provider_menus(providers, selected_day)
+
+    # Keep each restaurant together while using both sides of the screen.
+    columns = st.columns(2)
+    for index, (provider_name, provider) in enumerate(providers.items()):
+        with columns[index % 2]:
+            menu = menus[provider_name]
+            if menu is None:
+                st.markdown(f'<p style="color: #ff6b6b; font-size: 0.9rem;">Error loading {provider_name} menu</p>', unsafe_allow_html=True)
+            elif menu.items:
                 for item in menu.items:
                     display_menu_item(item, provider_name=provider_name, show_image=show_images)
             else:
                 st.markdown(f'<p style="color: #888; font-size: 0.9rem;">No menu from {provider_name} for this day</p>', unsafe_allow_html=True)
-                
-        except Exception as e:
-            st.markdown(f'<p style="color: #ff6b6b; font-size: 0.9rem;">Error loading {provider_name} menu</p>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
